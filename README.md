@@ -39,7 +39,6 @@ $ docker run \
 Create config.yaml
 ```yaml
 ---
-# port: 8000
 # debug: False
 match_configs:
   chicken_door:
@@ -61,10 +60,12 @@ match_configs:
 ```sh
 $ docker run \
     --rm \
-    --volume <path to config.yaml>:/config.yaml \
-    --publish 8000 \
+    --name image_match \
+    --volume <path to config.yaml>:/config.yaml:ro \
+    --publish 5000:5000 \
+    --interactive \
     ghcr.io/vangorra/image_match:main serve --config /config.yaml
-$ curl http://localhost:8000/match/chicken_door
+$ curl http://localhost:5000/match/chicken_door
 ```
 
 

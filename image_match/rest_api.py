@@ -16,7 +16,6 @@ class ServeConfig:
     Configuration for starting a REST API.
     """
 
-    port: int = 8080
     debug: bool = False
     match_configs: Dict[str, scanner.MatchConfig] = field(default_factory=dict)
 

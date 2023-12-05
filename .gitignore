@@ -2,3 +2,5 @@ venv
 __pycache__
 result
 build
+config.yaml
+.coverage

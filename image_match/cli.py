@@ -151,7 +151,7 @@ def serve(config: Path) -> None:
     serve_config = parse_yaml_raw_as(ServeConfig, config.read_text())  # type: ignore [type-var]
 
     app = new_rest_api_app(serve_config)
-    app.run(host="localhost", port=serve_config.port, debug=serve_config.debug)
+    app.run(host="0.0.0.0", debug=serve_config.debug)
 
 
 if __name__ == "__main__":
