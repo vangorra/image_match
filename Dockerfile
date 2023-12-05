@@ -18,8 +18,8 @@ RUN apt-get update \
 
 COPY . /workspace
 
-RUN ./scripts/build.sh \
-    && ./scripts/test.sh
+RUN /workspace/scripts/build.sh \
+    && /workspace/scripts/test.sh
 
 ENV CI=
 
