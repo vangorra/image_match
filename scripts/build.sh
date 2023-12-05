@@ -7,6 +7,10 @@ cd "$SELF_DIR/.."
 LINT_PATHS="tests image_match"
 
 echo ""
+echo "=Remove build dir="
+rm ./build -rf
+
+echo ""
 echo "=Install depdendencies="
 pipx run poetry install
 
