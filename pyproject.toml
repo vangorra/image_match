@@ -1,0 +1,117 @@
+[tool.poetry]
+name = "image-match"
+version = "0.1.0"
+description = ""
+authors = ["Robbie Van Gorkom <robbie.van.gorkom@protonmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.8.1"
+click = "^8.1.7"
+appdaemon = "^4.4.2"
+flask = "^3.0.0"
+pydantic-yaml = "^1.2.0"
+pydantic = "^2.5.2"
+opencv-python-headless = "^4.8.1.78"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.3"
+black = "^23.11.0"
+mypy = "^1.7.1"
+coverage = "^7.3.2"
+pytest-cov = "^4.1.0"
+autoflake = "^2.2.1"
+pylint = "^3.0.2"
+flake8 = "^6.1.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+target-version = ["py38"]
+include = "(tests|image_match)/[^/]+.py$"
+exclude = '''
+(
+  /(
+      \.eggs         # exclude a few common directories in the
+    | \.git          # root of the project
+    | \.hg
+    | \.mypy_cache
+    | \.tox
+    | \.venv
+    | venv
+    | build
+    | _build
+    | buck-out
+    | build
+    | dist
+  )/
+  | foo.py           # also separately exclude a file named foo.py in
+                     # the root of the project
+)
+'''
+
+[tool.coverage.run]
+branch = true
+command_line = "-m pytest"
+
+[tool.coverage.report]
+fail_under = 98.0
+include = ["image_match/*.py"]
+show_missing = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--capture no --cov ./image_match --cov-report html:build/coverage_report --cov-report term --cov-report xml:build/coverage.xml"
+
+[tool.mypy]
+packages = "tests,image_match"
+
+ignore_missing_imports = true
+follow_imports = "normal"
+follow_imports_for_stubs = true
+
+disallow_subclassing_any = true
+
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+
+no_implicit_optional = true
+
+warn_unused_ignores = true
+warn_return_any = true
+warn_unreachable = true
+
+implicit_reexport = true
+strict_equality = true
+
+[tool.pylint.MASTER]
+jobs=4
+
+[tool.pylint."MESSAGES CONTROL"]
+# Reasons disabled:
+# format - handled by black
+# too-many-* - are not enforced for the sake of readability
+# too-few-* - same as too-many-*
+disable=[
+    "format",
+    "too-many-arguments",
+    "too-few-public-methods"
+]
+
+[tool.pylint.REPORTS]
+reports = false
+
+[tool.pylint.TYPECHECK]
+# For attrs
+ignored-classes="responses"
+
+[tool.pylint.FORMAT]
+expected-line-ending-format="LF"
+
+[tool.pylint.EXCEPTIONS]
+overgeneral-exceptions="builtin.Exception"
+
