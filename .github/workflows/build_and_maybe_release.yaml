@@ -43,7 +43,7 @@ jobs:
         with:
           context: .
           build_args: |
-            CI ${{ CI }}
+            CI ${{ env.CI }}
           push: ${{ github.ref == 'refs/heads/main' && true || false }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
