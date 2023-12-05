@@ -23,4 +23,5 @@ RUN /workspace/scripts/build.sh \
 
 ENV CI=
 
+EXPOSE 5000
 ENTRYPOINT [ "/workspace/scripts/run.sh" ]

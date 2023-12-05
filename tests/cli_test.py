@@ -173,21 +173,20 @@ def test_match(
 
 
 @pytest.mark.parametrize(
-    "port,debug",
+    "debug",
     [
-        (8123, True),
-        (8080, False),
+        (True),
+        (False),
     ],
 )
 @patch("image_match.cli.new_rest_api_app")
-def test_serve(new_rest_api_app_mock: Mock, port: int, debug: bool) -> None:
+def test_serve(new_rest_api_app_mock: Mock, debug: bool) -> None:
     config_file = TEMP_DIR.joinpath("config.yaml")
     os.makedirs(config_file.parent, exist_ok=True)
 
     with open(config_file, "w") as handle:
         handle.write(
             f"""---
-port: {port}
 debug: {debug}"""
         )
 
@@ -202,4 +201,4 @@ debug: {debug}"""
     result = runner.invoke(serve, [CLI_ARG_CONFIG, str(config_file)])
 
     assert result.exit_code == 0
-    app_mock.run.assert_called_with(host="localhost", port=port, debug=debug)
+    app_mock.run.assert_called_with(host="0.0.0.0", debug=debug)
