@@ -181,7 +181,7 @@ def test_match(
 @patch("image_match.cli.new_rest_api_app")
 def test_serve(new_rest_api_app_mock: Mock, port: int, debug: bool) -> None:
     config_file = TEMP_DIR.joinpath("config.yaml")
-    assert str(config_file) == "workspace/build/tmp/config.yaml"
+    assert str(config_file) == "/workspace/build/tmp/config.yaml"
 
     with open(config_file, "w") as handle:
         handle.write(
