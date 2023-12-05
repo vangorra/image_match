@@ -1,3 +1,4 @@
+import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -181,6 +182,7 @@ def test_match(
 @patch("image_match.cli.new_rest_api_app")
 def test_serve(new_rest_api_app_mock: Mock, port: int, debug: bool) -> None:
     config_file = TEMP_DIR.joinpath("config.yaml")
+    os.makedirs(config_file.parent, exist_ok=True)
 
     with open(config_file, "w") as handle:
         handle.write(
