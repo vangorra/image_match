@@ -1,9 +1,11 @@
+from dataclasses import asdict
 import os
 from pathlib import Path
-from typing import cast
+import sys
 
 import click
 from pydantic_yaml import parse_yaml_raw_as
+import json
 
 from image_match import scanner
 from image_match.const import (
@@ -60,15 +62,15 @@ def fetch(
     crop_width: float,
     crop_height: float,
 ) -> None:
-    print("Fetch", sample_url)
+    print("Fetch", sample_url, file=sys.stderr)
     sample_image = scanner.fetch_image(sample_url)
     transform_options = scanner.TransformConfig(
         x=crop_x, y=crop_y, width=crop_width, height=crop_height
     )
-    print("Crop")
+    print("Crop", file=sys.stderr)
     cropped_image = scanner.crop_image(sample_image, transform_options)
 
-    print("Write to", output_file)
+    print("Write to", output_file, file=sys.stderr)
     os.makedirs(output_file.parent, exist_ok=True)
     scanner.write_image(cropped_image, output_file)
 
@@ -126,12 +128,7 @@ def match(
     )
 
     res = scanner_obj.do_match()
-
-    if isinstance(res, scanner.DoMatchPositiveResult):
-        res_pos = cast(scanner.DoMatchPositiveResult, res)
-        print("Match", res_pos.reference_image_path)
-    else:
-        print("No match")
+    print(json.dumps(asdict(res)))
 
 
 @main.command()

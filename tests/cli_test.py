@@ -1,7 +1,9 @@
+import json
 import os
 import re
 from pathlib import Path
-from typing import Optional
+import shutil
+from typing import Generator, Optional
 from unittest.mock import Mock, patch
 
 import pytest
@@ -24,12 +26,11 @@ from image_match.cli import (
     match,
     serve,
 )
+from image_match.common import DoMatchResult
 from image_match.const import DUMP_FILE_NAMES
 from image_match.scanner import MatchMode
 from tests.const import (
     DUMP_DIR,
-    PATTERN_MATCH,
-    PATTERN_NO_MATCH,
     REFERENCE_DIR,
     REFERENCE_SAMPLE_CLOSED_DAY,
     REFERENCE_SAMPLE_CLOSED_NIGHT,
@@ -72,58 +73,65 @@ def test_fetch() -> None:
     assert output_file_path.exists(), "Output file does not exist."
 
 
+@pytest.fixture(autouse=True)
+def run_around_tests() -> Generator:
+    if DUMP_DIR.exists():
+        shutil.rmtree(DUMP_DIR)
+    yield
+
+
 @pytest.mark.parametrize(
-    "sample_url,output_pattern,match_mode,dump_enabled",
+    "sample_url,assert_matches,match_mode,dump_enabled",
     [
-        (REFERENCE_SAMPLE_CLOSED_DAY, PATTERN_MATCH, None, True),
-        (REFERENCE_SAMPLE_CLOSED_NIGHT, PATTERN_MATCH, None, True),
-        (REFERENCE_SAMPLE_OPEN_DAY, PATTERN_NO_MATCH, None, True),
-        (REFERENCE_SAMPLE_OPEN_NIGHT, PATTERN_NO_MATCH, None, True),
+        (REFERENCE_SAMPLE_CLOSED_DAY, True, None, True),
+        (REFERENCE_SAMPLE_CLOSED_NIGHT, True, None, True),
+        (REFERENCE_SAMPLE_OPEN_DAY, False, None, True),
+        (REFERENCE_SAMPLE_OPEN_NIGHT, False, None, True),
         (
             REFERENCE_SAMPLE_CLOSED_DAY,
-            PATTERN_MATCH,
+            True,
             MatchMode.BRUTE_FORCE,
             False,
         ),
         (
             REFERENCE_SAMPLE_CLOSED_NIGHT,
-            PATTERN_MATCH,
+            True,
             MatchMode.BRUTE_FORCE,
             False,
         ),
         (
             REFERENCE_SAMPLE_OPEN_DAY,
-            PATTERN_NO_MATCH,
+            False,
             MatchMode.BRUTE_FORCE,
             False,
         ),
         (
             REFERENCE_SAMPLE_OPEN_NIGHT,
-            PATTERN_NO_MATCH,
+            False,
             MatchMode.BRUTE_FORCE,
             False,
         ),
         (
             REFERENCE_SAMPLE_CLOSED_DAY,
-            PATTERN_MATCH,
+            True,
             MatchMode.FLANN,
             False,
         ),
         (
             REFERENCE_SAMPLE_CLOSED_NIGHT,
-            PATTERN_MATCH,
+            True,
             MatchMode.FLANN,
             False,
         ),
         (
             REFERENCE_SAMPLE_OPEN_DAY,
-            PATTERN_NO_MATCH,
+            False,
             MatchMode.FLANN,
             False,
         ),
         (
             REFERENCE_SAMPLE_OPEN_NIGHT,
-            PATTERN_NO_MATCH,
+            False,
             MatchMode.FLANN,
             False,
         ),
@@ -131,7 +139,7 @@ def test_fetch() -> None:
 )
 def test_match(
     sample_url: Path,
-    output_pattern: re.Pattern,
+    assert_matches: bool,
     match_mode: Optional[MatchMode],
     dump_enabled: bool,
 ) -> None:
@@ -165,11 +173,35 @@ def test_match(
 
     assert result.exit_code == 0
 
-    assert output_pattern.match(result.output)
+    output_obj = json.loads(result.output)
+    match_result = DoMatchResult(**output_obj)
+    assert (
+        match_result.is_match == assert_matches
+    ), f"Expect is_match property of output to be '{assert_matches}' but was '{match_result.is_match}'."
 
     if dump_enabled:
+        dump_files = os.listdir(DUMP_DIR)
+        assert dump_files, f"Expected files to exist in {DUMP_DIR}"
+        assert (
+            len(dump_files) == 1
+        ), f"Expected only a single dump directory in '{DUMP_DIR}', found {len(dump_files)}."
+
+        dump_dir_name = dump_files[0]
+        dump_dir_path = DUMP_DIR.joinpath(dump_dir_name)
+        assert re.compile(
+            "[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}_[a-f0-9]{4}"
+        ).match(
+            dump_dir_name
+        ), f"Dump directory name in '{dump_dir_path}' should look like '2023-12-05 13:42:19.773830_ae4f'."
+        assert (
+            dump_dir_path.is_dir()
+        ), f"Expected path '{dump_dir_path}' to be a directory."
+
         for file_name in DUMP_FILE_NAMES:
-            assert DUMP_DIR.joinpath(file_name).exists(), "Dump file should exist."
+            dump_file_path = dump_dir_path.joinpath(file_name)
+            assert (
+                dump_file_path.exists()
+            ), f"Dump file should exist '{dump_file_path}'."
 
 
 @pytest.mark.parametrize(
