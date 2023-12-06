@@ -36,7 +36,7 @@ fi
 pipx run poetry run black $BLACK_ARGS .
 
 echo
-echo "===Lint with flake8==="
+echo "=Lint with flake8="
 pipx run poetry run flake8
 
 echo ""
