@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from typing import List, cast
 import uuid
+import sys
 
 import cv2
 from numpy import uint8
@@ -50,6 +51,11 @@ class Scanner:
         return fetch_image(self._options.sample_url)
 
     def do_match(self) -> DoMatchResult:
+        if self._resolved_dump_dir:
+            print(
+                f"Dump data to '{self._resolved_dump_dir.absolute()}'", file=sys.stderr
+            )
+
         start_time = time.perf_counter()
         reference_dir = self._options.reference_dir
         reference_file_paths: List[Path] = [

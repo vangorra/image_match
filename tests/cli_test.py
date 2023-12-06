@@ -168,12 +168,12 @@ def test_match(
         args.append(CLI_ARG_DUMP_DIR)
         args.append(str(DUMP_DIR))
 
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(match, args)
 
     assert result.exit_code == 0
 
-    output_obj = json.loads(result.output)
+    output_obj = json.loads(result.stdout)
     match_result = DoMatchResult(**output_obj)
     assert (
         match_result.is_match == assert_matches
