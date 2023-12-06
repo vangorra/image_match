@@ -1,22 +1,16 @@
-import abc
+from datetime import datetime
 import os
 import time
-from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, cast
+from typing import List, cast
+import uuid
 
 import cv2
 from numpy import uint8
 from numpy.typing import NDArray
+from image_match.common import DoMatchResult, MatchConfig, TransformConfig
 
 from image_match.const import (
-    DEFAULT_CROP_HEIGHT,
-    DEFAULT_CROP_WIDTH,
-    DEFAULT_CROP_X,
-    DEFAULT_CROP_Y,
-    DEFAULT_MATCH_CONFIDENCE,
-    DEFAULT_MATCH_MODE,
-    DUMP_FILE_NAMES,
     FILE_REFERENCE_IMAGE,
     FILE_REFERENCE_IMAGE_BLUR,
     FILE_REFERENCE_IMAGE_GRAY,
@@ -34,46 +28,7 @@ from image_match.const import (
 Cv2Image = NDArray[uint8]
 
 
-@dataclass(frozen=True)
-class TransformConfig:
-    x: float = DEFAULT_CROP_X
-    y: float = DEFAULT_CROP_Y
-    width: float = DEFAULT_CROP_WIDTH
-    height: float = DEFAULT_CROP_HEIGHT
-
-
-@dataclass(frozen=True)
-class MatchConfig:
-    reference_dir: Path
-    sample_url: str
-    transform_config: TransformConfig = TransformConfig()
-    match_mode: MatchMode = DEFAULT_MATCH_MODE
-    dump_dir: Optional[Path] = None
-    match_confidence: float = DEFAULT_MATCH_CONFIDENCE
-
-
-@dataclass(frozen=True)
-class AbsDoMatchResult(abc.ABC):
-    sample_image: Cv2Image
-    sample_image_cropped: Cv2Image
-    is_match: bool
-    run_duration: float
-    get_image_duration: float
-    check_count: int
-
-
-@dataclass(frozen=True)
-class DoMatchPositiveResult(AbsDoMatchResult):
-    reference_image: Cv2Image
-    reference_image_path: Path
-
-
-@dataclass(frozen=True)
-class DoMatchNegativeResult(AbsDoMatchResult):
-    pass
-
-
-class Scanner(abc.ABC):
+class Scanner:
     """
     Threshold code sourced from: https://docs.opencv.org/3.4/d7/d4d/tutorial_py_thresholding.html
     """
@@ -82,10 +37,19 @@ class Scanner(abc.ABC):
         super().__init__()
         self._options = options
 
+        date_time_prefix = str(datetime.now())
+        random_suffix = str(uuid.uuid4())[-4:]
+        dump_dir_name = f"{date_time_prefix}_{random_suffix}"
+        self._resolved_dump_dir = (
+            self._options.dump_dir.joinpath(dump_dir_name)
+            if self._options.dump_dir
+            else self._options.dump_dir
+        )
+
     def _get_image(self) -> Cv2Image:
         return fetch_image(self._options.sample_url)
 
-    def do_match(self) -> AbsDoMatchResult:
+    def do_match(self) -> DoMatchResult:
         start_time = time.perf_counter()
         reference_dir = self._options.reference_dir
         reference_file_paths: List[Path] = [
@@ -97,19 +61,6 @@ class Scanner(abc.ABC):
             if path.is_file() and path.name.lower().endswith(IMAGE_EXTENSIONS)
         ]
 
-        if self._options.dump_dir:
-            dump_file_paths = [
-                file_path
-                for file_path in [
-                    self._get_dump_image_path(file_name)
-                    for file_name in DUMP_FILE_NAMES
-                ]
-                if file_path.exists()
-            ]
-
-            for file_path in dump_file_paths:
-                os.remove(file_path)
-
         sample_image = self._get_image()
         get_image_duration = time.perf_counter() - start_time
         self._maybe_dump_image(sample_image, FILE_SAMPLE_IMAGE)
@@ -119,6 +70,8 @@ class Scanner(abc.ABC):
 
         prepared_sample_image = self._do_prepare_sample_image(sample_image)
 
+        is_match = False
+        reference_image = None
         check_count = 0
         for reference_image_path in reference_image_paths:
             check_count += 1
@@ -137,24 +90,14 @@ class Scanner(abc.ABC):
                 )
 
             if is_match:
-                return DoMatchPositiveResult(
-                    reference_image=reference_image,
-                    reference_image_path=reference_image_path,
-                    sample_image=sample_image,
-                    sample_image_cropped=sample_image,
-                    is_match=True,
-                    run_duration=(time.perf_counter() - start_time),
-                    get_image_duration=get_image_duration,
-                    check_count=check_count,
-                )
+                break
 
-        return DoMatchNegativeResult(
-            sample_image=sample_image,
-            sample_image_cropped=sample_image,
-            is_match=False,
+        return DoMatchResult(
+            is_match=is_match,
             run_duration=(time.perf_counter() - start_time),
             get_image_duration=get_image_duration,
             check_count=check_count,
+            reference_image_path=str(reference_image_path),
         )
 
     def _do_prepare_image(
@@ -267,11 +210,11 @@ class Scanner(abc.ABC):
         return match_count > 0
 
     def _get_dump_image_path(self, image_name: str) -> Path:
-        assert self._options.dump_dir, "dump_dir is not set"
-        return self._options.dump_dir.joinpath(image_name)
+        assert self._resolved_dump_dir, "dump_dir is not set"
+        return self._resolved_dump_dir.joinpath(image_name)
 
     def _maybe_dump_image(self, image: Cv2Image, image_name: str) -> None:
-        if not self._options.dump_dir:
+        if not self._resolved_dump_dir:
             return
 
         full_path = self._get_dump_image_path(image_name)

@@ -9,7 +9,7 @@ REFERENCE_SAMPLE_CLOSED_NIGHT = REFERENCE_SOURCE_SAMPLE_DIR.joinpath("closed_nig
 REFERENCE_SAMPLE_OPEN_DAY = REFERENCE_SOURCE_SAMPLE_DIR.joinpath("open_day.png")
 REFERENCE_SAMPLE_OPEN_NIGHT = REFERENCE_SOURCE_SAMPLE_DIR.joinpath("open_night.png")
 
-PATTERN_MATCH = re.compile("^Match ")
-PATTERN_NO_MATCH = re.compile("^No match")
+PATTERN_MATCH = re.compile('"is_match": true')
+PATTERN_NO_MATCH = re.compile('"is_match": false')
 
 DUMP_DIR = TEMP_DIR.joinpath("dump")

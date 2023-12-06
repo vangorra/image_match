@@ -12,6 +12,7 @@ reliable than using a battery powered sensor.
 # One-off CLI call
 $ docker run \
     --rm \
+    --tty \
     ghcr.io/vangorra/image_match:main \
     match \
     --reference-dir "./reference/chicken_door" \
@@ -25,6 +26,7 @@ $ docker run \
 # When placed in a loop over time, is useful for gathering a corpus of reference images.
 $ docker run \
     --rm \
+    --tty \
     ghcr.io/vangorra/image_match:main \
     fetch \
     --output-file "./my_new_reference_image.png" \
@@ -60,6 +62,7 @@ match_configs:
 ```sh
 $ docker run \
     --rm \
+    --tty \
     --name image_match \
     --volume <path to config.yaml>:/config.yaml:ro \
     --publish 5000:5000 \
