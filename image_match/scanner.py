@@ -109,10 +109,12 @@ class Scanner:
     def _do_prepare_image(
         self, image: Cv2Image, gray_name: str, blur_name: str, threshold_name: str
     ) -> Cv2Image:
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)  # convert to gray
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)  # convert to gray
         self._maybe_dump_image(image, gray_name)
+
         image = cv2.GaussianBlur(image, (5, 5), 0)
         self._maybe_dump_image(image, blur_name)
+
         _, image = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         self._maybe_dump_image(image, threshold_name)
 
