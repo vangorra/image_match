@@ -1,146 +1,162 @@
-from datetime import datetime
+import abc
+from concurrent.futures import Future, ThreadPoolExecutor, wait
+from dataclasses import dataclass
 import os
 import time
 from pathlib import Path
-from typing import List, cast
-import uuid
-import sys
+from typing import Callable, List, Optional
+from typing_extensions import Self
+from functools import lru_cache
+import multiprocessing
+import hashlib
+import logging
 
 import cv2
-from numpy import uint8
-from numpy.typing import NDArray
-from image_match.common import DoMatchResult, MatchConfig, TransformConfig
+from cv2.typing import MatLike
+from image_match.common import MatchConfig, TransformConfig, logging_trace
 
 from image_match.const import (
-    FILE_REFERENCE_IMAGE,
-    FILE_REFERENCE_IMAGE_BLUR,
-    FILE_REFERENCE_IMAGE_GRAY,
-    FILE_REFERENCE_IMAGE_THRESHOLD,
-    FILE_RESULT_DEBUG_IMAGE,
-    FILE_SAMPLE_IMAGE,
-    FILE_SAMPLE_IMAGE_BLUR,
-    FILE_SAMPLE_IMAGE_CROPPED,
-    FILE_SAMPLE_IMAGE_GRAY,
-    FILE_SAMPLE_IMAGE_THRESHOLD,
     IMAGE_EXTENSIONS,
     MatchMode,
 )
 
-Cv2Image = NDArray[uint8]
+
+def crop_image(image: MatLike, transform_options: TransformConfig) -> MatLike:
+    height, width = image.shape[:2]
+
+    crop_x = int(transform_options.x * width)
+    crop_y = int(transform_options.y * height)
+    crop_width = int(transform_options.width * width)
+    crop_height = int(transform_options.height * height)
+
+    return image[crop_y : (crop_y + crop_height), crop_x : (crop_x + crop_width)]
 
 
-class Scanner:
-    """
-    Threshold code sourced from: https://docs.opencv.org/3.4/d7/d4d/tutorial_py_thresholding.html
-    """
+def write_image(image: MatLike, image_path: Path) -> None:
+    cv2.imwrite(str(image_path), image)
 
-    def __init__(self, options: MatchConfig) -> None:
-        super().__init__()
+
+class CannotConnectToStream(Exception):
+    pass
+
+
+class FailedToReadFrame(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class AbsImagePreparerResult(abc.ABC):
+    filename_prefix: str
+    result: MatLike
+
+    def dump_to_directory(self, path: Path) -> None:
+        os.makedirs(path, exist_ok=True)
+        write_image(
+            self.result,
+            path.joinpath(f"{self.filename_prefix}_result.png"),
+        )
+        self._dump_to_directory(path)
+
+    @abc.abstractmethod
+    def _dump_to_directory(self, path: Path) -> None:
+        pass
+
+
+@dataclass(frozen=True)
+class AbsImagePreparer(abc.ABC):
+    filename_prefix: str
+
+    @abc.abstractmethod
+    def prepare_image(self, image: MatLike) -> AbsImagePreparerResult:
+        pass
+
+
+@dataclass(frozen=True)
+class AutoThresholdImagePreparerResult(AbsImagePreparerResult):
+    filename_prefix: str
+    gray_image: MatLike
+    gray_blur_image: MatLike
+    gray_blur_threshold_image: MatLike
+
+    def _dump_to_directory(self, path: Path) -> None:
+        write_image(
+            self.gray_image,
+            path.joinpath(f"{self.filename_prefix}_gray.png"),
+        )
+        write_image(
+            self.gray_blur_image,
+            path.joinpath(f"{self.filename_prefix}_gray_blur.png"),
+        )
+        write_image(
+            self.gray_blur_threshold_image,
+            path.joinpath(f"{self.filename_prefix}_gray_blur_threshold.png"),
+        )
+
+
+class AutoThresholdImagePreparer(AbsImagePreparer):
+    def prepare_image(self, image: MatLike) -> AutoThresholdImagePreparerResult:
+        gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+        blur_image = cv2.GaussianBlur(gray_image, (5, 5), 0)
+
+        _, threshold_image = cv2.threshold(
+            blur_image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+
+        return AutoThresholdImagePreparerResult(
+            filename_prefix=self.filename_prefix,
+            gray_image=gray_image,
+            gray_blur_image=blur_image,
+            gray_blur_threshold_image=threshold_image,
+            result=threshold_image,
+        )
+
+
+@dataclass(frozen=True)
+class BaseImageMatcherOptions:
+    match_confidence: float
+
+
+@dataclass(frozen=True)
+class AbsImageMatcherResult(abc.ABC):
+    is_match: bool
+
+    def dump_to_directory(self, path: Path) -> None:
+        os.makedirs(path, exist_ok=True)
+        self._dump_to_directory(path)
+
+    def _dump_to_directory(self, path: Path) -> None:
+        pass
+
+
+@dataclass(frozen=True)
+class ImageMatcherResult(AbsImageMatcherResult):
+    debug_image: MatLike
+
+    def _dump_to_directory(self, path: Path) -> None:
+        os.makedirs(path, exist_ok=True)
+
+        write_image(
+            self.debug_image,
+            path.joinpath("debug.png"),
+        )
+
+
+class AbsImageMatcher(abc.ABC):
+    def __init__(self, options: BaseImageMatcherOptions) -> None:
         self._options = options
 
-        date_time_prefix = str(datetime.now())
-        random_suffix = str(uuid.uuid4())[-4:]
-        dump_dir_name = f"{date_time_prefix}_{random_suffix}"
-        self._resolved_dump_dir = (
-            self._options.dump_dir.joinpath(dump_dir_name)
-            if self._options.dump_dir
-            else self._options.dump_dir
-        )
+    @abc.abstractmethod
+    def match(
+        self, prepared_sample_image: MatLike, prepared_reference_image: MatLike
+    ) -> AbsImageMatcherResult:
+        pass
 
-    def _get_image(self) -> Cv2Image:
-        return fetch_image(self._options.sample_url)
 
-    def do_match(self) -> DoMatchResult:
-        if self._resolved_dump_dir:
-            print(
-                f"Dump data to '{self._resolved_dump_dir.absolute()}'", file=sys.stderr
-            )
-
-        start_time = time.perf_counter()
-        reference_dir = self._options.reference_dir
-        reference_file_paths: List[Path] = [
-            reference_dir.joinpath(file_name) for file_name in os.listdir(reference_dir)
-        ]
-        reference_image_paths = [
-            path
-            for path in reference_file_paths
-            if path.is_file() and path.name.lower().endswith(IMAGE_EXTENSIONS)
-        ]
-
-        sample_image = self._get_image()
-        get_image_duration = time.perf_counter() - start_time
-        self._maybe_dump_image(sample_image, FILE_SAMPLE_IMAGE)
-
-        sample_image = crop_image(sample_image, self._options.transform_config)
-        self._maybe_dump_image(sample_image, FILE_SAMPLE_IMAGE_CROPPED)
-
-        prepared_sample_image = self._do_prepare_sample_image(sample_image)
-
-        is_match = False
-        reference_image = None
-        check_count = 0
-        for reference_image_path in reference_image_paths:
-            check_count += 1
-            reference_image = cv2.imread(str(reference_image_path))
-            self._maybe_dump_image(reference_image, FILE_REFERENCE_IMAGE)
-
-            prepared_reference_image = self._do_prepare_reference_image(reference_image)
-
-            if self._options.match_mode == MatchMode.FLANN:
-                is_match = self._do_match_flann(
-                    prepared_reference_image, prepared_sample_image
-                )
-            else:
-                is_match = self._do_match_brute_force(
-                    prepared_reference_image, prepared_sample_image
-                )
-
-            if is_match:
-                break
-
-        return DoMatchResult(
-            is_match=is_match,
-            run_duration=(time.perf_counter() - start_time),
-            get_image_duration=get_image_duration,
-            check_count=check_count,
-            reference_image_path=str(reference_image_path),
-        )
-
-    def _do_prepare_image(
-        self, image: Cv2Image, gray_name: str, blur_name: str, threshold_name: str
-    ) -> Cv2Image:
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)  # convert to gray
-        self._maybe_dump_image(image, gray_name)
-
-        image = cv2.GaussianBlur(image, (5, 5), 0)
-        self._maybe_dump_image(image, blur_name)
-
-        _, image = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        self._maybe_dump_image(image, threshold_name)
-
-        return image
-
-    def _do_prepare_sample_image(self, image: Cv2Image) -> Cv2Image:
-        return self._do_prepare_image(
-            image=image,
-            gray_name=FILE_SAMPLE_IMAGE_GRAY,
-            blur_name=FILE_SAMPLE_IMAGE_BLUR,
-            threshold_name=FILE_SAMPLE_IMAGE_THRESHOLD,
-        )
-
-    def _do_prepare_reference_image(self, image: Cv2Image) -> Cv2Image:
-        return self._do_prepare_image(
-            image=image,
-            gray_name=FILE_REFERENCE_IMAGE_GRAY,
-            blur_name=FILE_REFERENCE_IMAGE_BLUR,
-            threshold_name=FILE_REFERENCE_IMAGE_THRESHOLD,
-        )
-
-    def _do_match_flann(
-        self,
-        prepared_reference_image: Cv2Image,
-        prepared_sample_image: Cv2Image,
-    ) -> bool:
+class FlannImageMatcher(AbsImageMatcher):
+    def match(
+        self, prepared_sample_image: MatLike, prepared_reference_image: MatLike
+    ) -> ImageMatcherResult:
         # Initiate SIFT detector
         sift = cv2.SIFT_create()  # type: ignore [attr-defined]
         # find the keypoints and descriptors with SIFT
@@ -176,15 +192,17 @@ class Scanner:
             None,
             **draw_params,
         )
-        self._maybe_dump_image(debug_image, FILE_RESULT_DEBUG_IMAGE)
 
-        return match_count > 0
+        return ImageMatcherResult(
+            is_match=match_count > 0,
+            debug_image=debug_image,
+        )
 
-    def _do_match_brute_force(
-        self,
-        prepared_reference_image: Cv2Image,
-        prepared_sample_image: Cv2Image,
-    ) -> bool:
+
+class BruteForceImageMatcher(AbsImageMatcher):
+    def match(
+        self, prepared_sample_image: MatLike, prepared_reference_image: MatLike
+    ) -> ImageMatcherResult:
         # Initiate ORB detector
         orb = cv2.ORB_create()  # type: ignore [attr-defined]
         # find the keypoints and descriptors with ORB
@@ -213,56 +231,346 @@ class Scanner:
             None,
             flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS,
         )
-        self._maybe_dump_image(debug_image, FILE_RESULT_DEBUG_IMAGE)
 
-        return match_count > 0
-
-    def _get_dump_image_path(self, image_name: str) -> Path:
-        assert self._resolved_dump_dir, "dump_dir is not set"
-        return self._resolved_dump_dir.joinpath(image_name)
-
-    def _maybe_dump_image(self, image: Cv2Image, image_name: str) -> None:
-        if not self._resolved_dump_dir:
-            return
-
-        full_path = self._get_dump_image_path(image_name)
-        os.makedirs(full_path.parent, exist_ok=True)
-        write_image(image, full_path)
+        return ImageMatcherResult(
+            is_match=match_count > 0,
+            debug_image=debug_image,
+        )
 
 
-def fetch_image(url: str) -> Cv2Image:
-    if url.startswith("rtsp://"):
-        cap = cv2.VideoCapture(url)
-        if not cap.isOpened():
-            raise CannotConnectToStream()
+class Timer:
+    _start_time: Optional[float] = None
+    _end_time: Optional[float] = None
+    _duration: Optional[float] = None
 
-        ret, frame = cap.read()
-        if not ret:
-            raise FailedToReadFrame()
+    def start(self) -> Self:
+        self._duration = None
+        self._end_time = None
+        self._start_time = time.perf_counter()
+        return self
 
-        return cast(Cv2Image, frame)
+    def stop(self) -> Self:
+        assert self._start_time, "Timer must have been started."
+        self._end_time = time.perf_counter()
+        self._duration = self._end_time - self._start_time
+        return self
 
-    return cast(Cv2Image, cv2.imread(url))
-
-
-def crop_image(image: Cv2Image, transform_options: TransformConfig) -> Cv2Image:
-    height, width = image.shape[:2]
-
-    crop_x = int(transform_options.x * width)
-    crop_y = int(transform_options.y * height)
-    crop_width = int(transform_options.width * width)
-    crop_height = int(transform_options.height * height)
-
-    return image[crop_y : (crop_y + crop_height), crop_x : (crop_x + crop_width)]
+    def duration(self) -> float:
+        assert self._duration, "Timer must have been started and stopped."
+        return self._duration
 
 
-def write_image(image: Cv2Image, image_path: Path) -> None:
-    cv2.imwrite(str(image_path), image)
+@dataclass(frozen=True)
+class FetchImageResult:
+    filename_prefix: str
+    duration: float
+    image: MatLike
+
+    def dump_to_directory(self, path: Path) -> None:
+        os.makedirs(path, exist_ok=True)
+
+        write_image(self.image, path.joinpath(f"{self.filename_prefix}.png"))
 
 
-class CannotConnectToStream(Exception):
-    pass
+@dataclass(frozen=True)
+class FetchPreparedReferenceImageResult:
+    fetch_result: FetchImageResult
+    prepare_result: AbsImagePreparerResult
+
+    def dump_to_directory(self, path: Path) -> None:
+        os.makedirs(path, exist_ok=True)
+
+        self.fetch_result.dump_to_directory(path)
+        self.prepare_result.dump_to_directory(path)
 
 
-class FailedToReadFrame(Exception):
-    pass
+@dataclass(frozen=True)
+class ProcessResult:
+    fetch_prepared_reference_image_result: FetchPreparedReferenceImageResult
+    matcher_result: AbsImageMatcherResult
+    reference_image_path: Path
+    match_duration: float
+    fetch_prepared_image_duration: float
+    total_duration: float
+
+    def dump_to_directory(self, path: Path) -> None:
+        os.makedirs(path, exist_ok=True)
+
+        self.fetch_prepared_reference_image_result.dump_to_directory(path)
+        self.matcher_result.dump_to_directory(path)
+
+
+@dataclass(frozen=True)
+class Durations:
+    match_all: float
+    total: float
+    sample_fetch: float
+    sample_prepare: float
+
+    reference_match: float
+    reference_fetch_prepared_image: float
+    reference_match_total: float
+
+
+@dataclass(frozen=True)
+class DoMatchResultSerializable:
+    is_match: bool
+    reference_image_path: Optional[str]
+    match_attempt_count: int
+    durations: Durations
+
+
+@dataclass(frozen=True)
+class DoMatchResult:
+    is_match: bool
+    process_result: Optional[ProcessResult]
+    sample_image_fetch_result: FetchImageResult
+    cropped_sample_image: MatLike
+    prepared_cropped_sample_image_result: AbsImagePreparerResult
+    match_all_duration: float
+    total_duration: float
+    sample_prepare_duration: float
+    match_attempt_count: int
+
+    def dump_to_directory(self, path: Path) -> None:
+        os.makedirs(path, exist_ok=True)
+
+        if self.process_result:
+            self.process_result.dump_to_directory(path)
+
+        self.prepared_cropped_sample_image_result.dump_to_directory(path)
+
+        self.sample_image_fetch_result.dump_to_directory(path)
+
+        write_image(
+            self.cropped_sample_image,
+            path.joinpath("sample_cropped.png"),
+        )
+
+    def to_serializable(self) -> DoMatchResultSerializable:
+        return DoMatchResultSerializable(
+            is_match=self.is_match,
+            reference_image_path=str(self.process_result.reference_image_path)
+            if self.process_result
+            else None,
+            match_attempt_count=self.match_attempt_count,
+            durations=Durations(
+                match_all=self.match_all_duration,
+                total=self.total_duration,
+                sample_fetch=self.sample_image_fetch_result.duration,
+                sample_prepare=self.sample_prepare_duration,
+                reference_match=self.process_result.match_duration
+                if self.process_result and self.process_result.match_duration
+                else -1,
+                reference_fetch_prepared_image=self.process_result.fetch_prepared_image_duration
+                if self.process_result
+                and self.process_result.fetch_prepared_image_duration
+                else -1,
+                reference_match_total=self.process_result.total_duration
+                if self.process_result and self.process_result.total_duration
+                else -1,
+            ),
+        )
+
+
+class MatchOrchestrator:
+    _config: MatchConfig
+    _cached_fetch_prepared_reference_image: Callable[
+        [Path], FetchPreparedReferenceImageResult
+    ]
+    _sample_image_preparer: AbsImagePreparer
+    _reference_image_preparer: AbsImagePreparer
+    _image_matcher: AbsImageMatcher
+    _fetch_cached_hash: str = ""
+
+    def __init__(self, match_config: MatchConfig) -> None:
+        self._config = match_config
+
+        self._sample_image_preparer = AutoThresholdImagePreparer("sample")
+        self._reference_image_preparer = AutoThresholdImagePreparer("reference")
+
+        image_matcher_options = BaseImageMatcherOptions(
+            match_confidence=self._config.match_confidence
+        )
+
+        if self._config.match_mode == MatchMode.FLANN:
+            self._image_matcher = FlannImageMatcher(image_matcher_options)
+        elif self._config.match_mode == MatchMode.BRUTE_FORCE:
+            self._image_matcher = BruteForceImageMatcher(image_matcher_options)
+        else:
+            raise ValueError("Provided match_mode is invalid.")
+
+    @staticmethod
+    def fetch_image(url: str, filename_prefix: str) -> FetchImageResult:
+        timer = Timer().start()
+
+        if url.startswith("rtsp://"):
+            cap = cv2.VideoCapture(url)
+            if not cap.isOpened():
+                raise CannotConnectToStream()
+
+            ret, frame = cap.read()
+            if not ret:
+                raise FailedToReadFrame()
+
+            image = frame
+        else:
+            image = cv2.imread(url)
+
+        return FetchImageResult(
+            filename_prefix=filename_prefix,
+            image=image,
+            duration=timer.stop().duration(),
+        )
+
+    def _fetch_prepared_reference_image(
+        self, path: Path
+    ) -> FetchPreparedReferenceImageResult:
+        fetch_result = self.fetch_image(str(path), "reference")
+        prepare_result = self._reference_image_preparer.prepare_image(
+            fetch_result.image
+        )
+        return FetchPreparedReferenceImageResult(
+            fetch_result=fetch_result,
+            prepare_result=prepare_result,
+        )
+
+    def _get_reference_image_paths(self) -> List[Path]:
+        reference_dir = self._config.reference_dir
+        reference_file_paths: List[Path] = [
+            reference_dir.joinpath(file_name) for file_name in os.listdir(reference_dir)
+        ]
+        image_file_paths = [
+            path
+            for path in reference_file_paths
+            if path.is_file() and path.name.lower().endswith(IMAGE_EXTENSIONS)
+        ]
+        image_file_paths.sort()
+        return image_file_paths
+
+    def do_match(self) -> DoMatchResult:
+        total_timer = Timer().start()
+
+        logging.debug(f"Fetch sample image from '{self._config.sample_url}'.")
+        sample_image_fetch_result = MatchOrchestrator.fetch_image(
+            self._config.sample_url, "sample"
+        )
+        sample_image = sample_image_fetch_result.image
+
+        prepare_sample_timer = Timer().start()
+        logging.debug("Crop sample image.")
+        cropped_sample_image = crop_image(sample_image, self._config.transform_config)
+        logging.debug("Prepare sample image.")
+        prepared_cropped_sample_image_result = (
+            self._sample_image_preparer.prepare_image(cropped_sample_image)
+        )
+        prepare_sample_timer.stop()
+
+        process_result: Optional[ProcessResult] = None
+
+        match_all_timer = Timer().start()
+        reference_image_paths = self._get_reference_image_paths()
+        max_worker_count = max(multiprocessing.cpu_count() - 2, 1)
+        logging.info(
+            f"Using {max_worker_count} threads to match {len(reference_image_paths)} reference images."
+        )
+        with ThreadPoolExecutor(max_workers=max_worker_count) as executor:
+            futures: List[Future] = []
+
+            def on_future_done(future: Future) -> None:
+                nonlocal futures
+                nonlocal process_result
+
+                if future.cancelled():
+                    return
+
+                result: ProcessResult = future.result()
+                if not result.matcher_result.is_match or process_result:
+                    return
+                process_result = result
+
+                # Cancel remaining futures.
+                for future in futures:
+                    future.cancel()
+
+            # Recreate reference cache function (if needed).
+            reference_image_paths_str = ",".join(
+                [
+                    str(reference_image_path)
+                    for reference_image_path in reference_image_paths
+                ]
+            ).encode("utf-8")
+            fetch_cached_hash = hashlib.md5(reference_image_paths_str).hexdigest()
+            if fetch_cached_hash != self._fetch_cached_hash:
+                cache_limit = len(reference_image_paths)
+                logging.info(
+                    f"Reference files changed, regenerate _cached_fetch_prepared_reference_image() with limit {cache_limit}."
+                )
+                self._fetch_cached_hash = fetch_cached_hash
+                self._cached_fetch_prepared_reference_image = lru_cache(cache_limit)(
+                    self._fetch_prepared_reference_image
+                )
+
+            # Schedule processing tasks.
+            for reference_image_path in reference_image_paths:
+                future: Future = executor.submit(
+                    self._process_image,
+                    prepared_cropped_sample_image_result,
+                    reference_image_path,
+                )
+                futures.append(future)
+                future.add_done_callback(on_future_done)
+
+        logging_trace("Wait for futures to complete.")
+        wait(futures)
+        match_all_timer.stop()
+
+        return DoMatchResult(
+            is_match=process_result.matcher_result.is_match
+            if process_result
+            else False,
+            process_result=process_result,
+            sample_image_fetch_result=sample_image_fetch_result,
+            cropped_sample_image=cropped_sample_image,
+            prepared_cropped_sample_image_result=prepared_cropped_sample_image_result,
+            match_all_duration=match_all_timer.duration(),
+            total_duration=total_timer.stop().duration(),
+            sample_prepare_duration=prepare_sample_timer.duration(),
+            match_attempt_count=len(
+                [
+                    future
+                    for future in futures
+                    if future.done() and not future.cancelled()
+                ]
+            ),
+        )
+
+    def _process_image(
+        self,
+        prepared_sample_image_result: AbsImagePreparerResult,
+        reference_image_path: Path,
+    ) -> ProcessResult:
+        logging_trace(f"_process_image {reference_image_path}")
+
+        total_timer = Timer().start()
+        fetch_preapred_image_timer = Timer().start()
+        fetch_prepared_reference_image_result = (
+            self._cached_fetch_prepared_reference_image(reference_image_path)
+        )
+        fetch_preapred_image_timer.stop()
+
+        match_timer = Timer().start()
+        matcher_result = self._image_matcher.match(
+            prepared_sample_image_result.result,
+            fetch_prepared_reference_image_result.prepare_result.result,
+        )
+        match_timer.stop()
+
+        return ProcessResult(
+            fetch_prepared_reference_image_result=fetch_prepared_reference_image_result,
+            matcher_result=matcher_result,
+            reference_image_path=reference_image_path,
+            match_duration=match_timer.duration(),
+            fetch_prepared_image_duration=fetch_preapred_image_timer.duration(),
+            total_duration=total_timer.stop().duration(),
+        )
