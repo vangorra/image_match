@@ -1,4 +1,6 @@
+from dataclasses import dataclass
 from enum import Enum
+import logging
 
 ARG_SAMPLE_URL = "sample-url"
 ARG_OUTPUT_FILE = "output-file"
@@ -11,6 +13,7 @@ ARG_MATCH_MODE = "match-mode"
 ARG_DUMP_DIR = "dump-dir"
 ARG_MATCH_CONFIDENCE = "match-confidence"
 ARG_CONFIG = "config"
+ARG_LOG_LEVEL = "log-level"
 
 MATCH_MODE_FLANN_VALUE = "flann"
 MATCH_MODE_BRUTE_FORCE_VALUE = "brute_force"
@@ -21,6 +24,24 @@ class MatchMode(str, Enum):
     BRUTE_FORCE = MATCH_MODE_BRUTE_FORCE_VALUE
 
 
+@dataclass(frozen=True)
+class LoggingLevelMap:
+    str_value: str
+    int_value: int
+
+
+LOGLEVEL_TRACE = 9
+
+
+class LogLevel(Enum):
+    CRITICAL = LoggingLevelMap(str_value="critical", int_value=logging.CRITICAL)
+    ERROR = LoggingLevelMap(str_value="error", int_value=logging.ERROR)
+    WARN = LoggingLevelMap(str_value="warn", int_value=logging.WARN)
+    INFO = LoggingLevelMap(str_value="info", int_value=logging.INFO)
+    DEBUG = LoggingLevelMap(str_value="debug", int_value=logging.DEBUG)
+    TRACE = LoggingLevelMap(str_value="trace", int_value=LOGLEVEL_TRACE)
+
+
 DEFAULT_MATCH_MODE = MatchMode.FLANN
 DEFAULT_DUMP_DIR = None
 DEFAULT_MATCH_CONFIDENCE = 0.9
@@ -28,32 +49,6 @@ DEFAULT_CROP_X = 0.0
 DEFAULT_CROP_Y = 0.0
 DEFAULT_CROP_WIDTH = 1.0
 DEFAULT_CROP_HEIGHT = 1.0
+DEFAULT_LOG_LEVEL = LogLevel.INFO
 
 IMAGE_EXTENSIONS = tuple([".jpg", ".png", ".webp"])
-
-FILE_SAMPLE_IMAGE = "a1_sample_image.png"
-FILE_SAMPLE_IMAGE_CROPPED = "b1_sample_image_cropped.png"
-FILE_REFERENCE_IMAGE = "c1_reference_image.png"
-
-FILE_SAMPLE_IMAGE_GRAY = "d1_sample_image_gray.png"
-FILE_SAMPLE_IMAGE_BLUR = "d2_sample_image_blur.png"
-FILE_SAMPLE_IMAGE_THRESHOLD = "d3_sample_image_threshold.png"
-
-FILE_REFERENCE_IMAGE_GRAY = "e1_reference_image_gray.png"
-FILE_REFERENCE_IMAGE_BLUR = "e2_reference_image_blur.png"
-FILE_REFERENCE_IMAGE_THRESHOLD = "e3_reference_image_threshold.png"
-
-FILE_RESULT_DEBUG_IMAGE = "f1_result_debug_image.png"
-
-DUMP_FILE_NAMES = [
-    FILE_SAMPLE_IMAGE,
-    FILE_SAMPLE_IMAGE_CROPPED,
-    FILE_REFERENCE_IMAGE,
-    FILE_SAMPLE_IMAGE_GRAY,
-    FILE_SAMPLE_IMAGE_BLUR,
-    FILE_SAMPLE_IMAGE_THRESHOLD,
-    FILE_REFERENCE_IMAGE_GRAY,
-    FILE_REFERENCE_IMAGE_BLUR,
-    FILE_REFERENCE_IMAGE_THRESHOLD,
-    FILE_RESULT_DEBUG_IMAGE,
-]

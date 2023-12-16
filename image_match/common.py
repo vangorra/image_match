@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
+import logging
 from pathlib import Path
+import sys
 from typing import Dict, Optional
 
 from image_match.const import (
@@ -9,6 +11,8 @@ from image_match.const import (
     DEFAULT_CROP_Y,
     DEFAULT_MATCH_CONFIDENCE,
     DEFAULT_MATCH_MODE,
+    LOGLEVEL_TRACE,
+    LogLevel,
     MatchMode,
 )
 
@@ -32,15 +36,6 @@ class MatchConfig:
 
 
 @dataclass(frozen=True)
-class DoMatchResult:
-    is_match: bool
-    run_duration: float
-    get_image_duration: float
-    check_count: int
-    reference_image_path: Optional[str]
-
-
-@dataclass(frozen=True)
 class ServeConfig:
     """
     Configuration for starting a REST API.
@@ -48,3 +43,20 @@ class ServeConfig:
 
     debug: bool = False
     match_configs: Dict[str, MatchConfig] = field(default_factory=dict)
+
+
+def logging_trace(message: str) -> None:
+    logging.log(LOGLEVEL_TRACE, message)
+
+
+def maybe_set_log_level(log_level_str_value: str) -> None:
+    for entry in LogLevel:
+        if entry.value.str_value == log_level_str_value:
+            logging.addLevelName(LOGLEVEL_TRACE, "TRACE")
+            logging.basicConfig(
+                format="%(asctime)s [%(levelname)s] %(message)s",
+                level=entry.value.int_value,
+                datefmt="%Y-%m-%d %H:%M:%S",
+                stream=sys.stderr,
+            )
+            return

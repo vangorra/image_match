@@ -1,6 +1,10 @@
 from typing import Any
 from unittest.mock import Mock, patch
-from image_match.scanner import fetch_image, CannotConnectToStream, FailedToReadFrame
+from image_match.scanner import (
+    CannotConnectToStream,
+    FailedToReadFrame,
+    MatchOrchestrator,
+)
 import pytest
 
 
@@ -20,9 +24,9 @@ def test_fetch_image_rstp(video_capture_mock: Mock) -> None:
 
     video_capture_mock.return_value = obj
 
-    res = fetch_image("rtsp://localhost/blah")
+    res = MatchOrchestrator.fetch_image("rtsp://localhost/blah", "test")
 
-    assert res == "THE FRAME!"
+    assert res.image == "THE FRAME!"
 
 
 @patch("image_match.scanner.cv2.VideoCapture")
@@ -34,7 +38,7 @@ def test_fetch_image_rstp_not_opened(video_capture_mock: Mock) -> None:
     video_capture_mock.return_value = obj
 
     with pytest.raises(CannotConnectToStream):
-        fetch_image("rtsp://localhost/blah")
+        MatchOrchestrator.fetch_image("rtsp://localhost/blah", "test")
 
 
 @patch("image_match.scanner.cv2.VideoCapture")
@@ -46,4 +50,4 @@ def test_fetch_image_rstp_no_frame(video_capture_mock: Mock) -> None:
     video_capture_mock.return_value = obj
 
     with pytest.raises(FailedToReadFrame):
-        fetch_image("rtsp://localhost/blah")
+        MatchOrchestrator.fetch_image("rtsp://localhost/blah", "test")

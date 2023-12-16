@@ -3,7 +3,7 @@ import os
 import re
 from pathlib import Path
 import shutil
-from typing import Generator, Optional
+from typing import Generator, Optional, Tuple
 from unittest.mock import Mock, patch
 
 import pytest
@@ -26,11 +26,11 @@ from image_match.cli import (
     match,
     serve,
 )
-from image_match.common import DoMatchResult
-from image_match.const import DUMP_FILE_NAMES
-from image_match.scanner import MatchMode
+from image_match.scanner import MatchMode, DoMatchResultSerializable
 from tests.const import (
     DUMP_DIR,
+    DUMP_FILE_NAMES_MATCH,
+    DUMP_FILE_NAMES_NO_MATCH,
     REFERENCE_DIR,
     REFERENCE_SAMPLE_CLOSED_DAY,
     REFERENCE_SAMPLE_CLOSED_NIGHT,
@@ -81,59 +81,67 @@ def run_around_tests() -> Generator:
 
 
 @pytest.mark.parametrize(
-    "sample_url,assert_matches,match_mode,dump_enabled",
+    "sample_url,assert_matches,match_mode,dump_enabled,expect_dump_files",
     [
-        (REFERENCE_SAMPLE_CLOSED_DAY, True, None, True),
-        (REFERENCE_SAMPLE_CLOSED_NIGHT, True, None, True),
-        (REFERENCE_SAMPLE_OPEN_DAY, False, None, True),
-        (REFERENCE_SAMPLE_OPEN_NIGHT, False, None, True),
+        (REFERENCE_SAMPLE_CLOSED_DAY, True, None, True, DUMP_FILE_NAMES_MATCH),
+        (REFERENCE_SAMPLE_CLOSED_NIGHT, True, None, True, DUMP_FILE_NAMES_MATCH),
+        (REFERENCE_SAMPLE_OPEN_DAY, False, None, True, DUMP_FILE_NAMES_NO_MATCH),
+        (REFERENCE_SAMPLE_OPEN_NIGHT, False, None, True, DUMP_FILE_NAMES_NO_MATCH),
         (
             REFERENCE_SAMPLE_CLOSED_DAY,
             True,
             MatchMode.BRUTE_FORCE,
             False,
+            (),
         ),
         (
             REFERENCE_SAMPLE_CLOSED_NIGHT,
             True,
             MatchMode.BRUTE_FORCE,
             False,
+            (),
         ),
         (
             REFERENCE_SAMPLE_OPEN_DAY,
             False,
             MatchMode.BRUTE_FORCE,
             False,
+            (),
         ),
         (
             REFERENCE_SAMPLE_OPEN_NIGHT,
             False,
             MatchMode.BRUTE_FORCE,
             False,
+            (),
         ),
         (
             REFERENCE_SAMPLE_CLOSED_DAY,
             True,
             MatchMode.FLANN,
             False,
+            (),
         ),
         (
             REFERENCE_SAMPLE_CLOSED_NIGHT,
             True,
             MatchMode.FLANN,
             False,
+            (),
         ),
         (
             REFERENCE_SAMPLE_OPEN_DAY,
             False,
             MatchMode.FLANN,
             False,
+            (),
         ),
         (
             REFERENCE_SAMPLE_OPEN_NIGHT,
             False,
             MatchMode.FLANN,
             False,
+            (),
         ),
     ],
 )
@@ -142,7 +150,11 @@ def test_match(
     assert_matches: bool,
     match_mode: Optional[MatchMode],
     dump_enabled: bool,
+    expect_dump_files: Tuple[str, ...],
 ) -> None:
+    if DUMP_DIR.exists():
+        shutil.rmtree(DUMP_DIR)
+
     args = [
         CLI_ARG_REFERENCE_DIR,
         str(REFERENCE_DIR),
@@ -174,7 +186,7 @@ def test_match(
     assert result.exit_code == 0
 
     output_obj = json.loads(result.stdout)
-    match_result = DoMatchResult(**output_obj)
+    match_result = DoMatchResultSerializable(**output_obj)
     assert (
         match_result.is_match == assert_matches
     ), f"Expect is_match property of output to be '{assert_matches}' but was '{match_result.is_match}'."
@@ -197,7 +209,7 @@ def test_match(
             dump_dir_path.is_dir()
         ), f"Expected path '{dump_dir_path}' to be a directory."
 
-        for file_name in DUMP_FILE_NAMES:
+        for file_name in expect_dump_files:
             dump_file_path = dump_dir_path.joinpath(file_name)
             assert (
                 dump_file_path.exists()

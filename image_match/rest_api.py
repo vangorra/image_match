@@ -15,13 +15,17 @@ def new_rest_api_app(serve_config: ServeConfig) -> Flask:
     Create a new REST API from a ServeConfig.
     """
     app = Flask(__name__)
+    orchestrators = {
+        name: scanner.MatchOrchestrator(match_config)
+        for (name, match_config) in serve_config.match_configs.items()
+    }
 
     @app.route("/match/<name>", methods=["GET"])
     def match(name: str) -> Any:
-        if name not in serve_config.match_configs:
+        if name not in orchestrators:
             return "Not found", 404
 
-        scanner_obj = scanner.Scanner(serve_config.match_configs[name])
-        return asdict(scanner_obj.do_match())
+        orchestrator = orchestrators[name]
+        return asdict(orchestrator.do_match().to_serializable())
 
     return app
