@@ -201,10 +201,14 @@ def test_match(
         dump_dir_name = dump_files[0]
         dump_dir_path = DUMP_DIR.joinpath(dump_dir_name)
         assert re.compile(
-            "[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}_[a-f0-9]{4}"
+            "[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}_(match|nomatch)_[a-f0-9]{4}"
         ).match(
             dump_dir_name
         ), f"Dump directory name in '{dump_dir_path}' should look like '2023-12-05 13:42:19.773830_ae4f'."
+        if match_result.is_match:
+            assert "_match_" in dump_dir_name
+        else:
+            assert "_nomatch_" in dump_dir_name
         assert (
             dump_dir_path.is_dir()
         ), f"Expected path '{dump_dir_path}' to be a directory."

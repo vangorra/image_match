@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 from image_match.scanner import (
     CannotConnectToStream,
     FailedToReadFrame,
-    MatchOrchestrator,
+    RtspImageFetcher,
 )
 import pytest
 
@@ -15,6 +15,9 @@ class MockVideoCapture:
     def read(self) -> Any:
         pass
 
+    def open(self, url: str) -> None:
+        pass
+
 
 @patch("image_match.scanner.cv2.VideoCapture")
 def test_fetch_image_rstp(video_capture_mock: Mock) -> None:
@@ -24,7 +27,20 @@ def test_fetch_image_rstp(video_capture_mock: Mock) -> None:
 
     video_capture_mock.return_value = obj
 
-    res = MatchOrchestrator.fetch_image("rtsp://localhost/blah", "test")
+    res = RtspImageFetcher("rtsp://localhost/blah").fetch("test")
+
+    assert res.image == "THE FRAME!"
+
+
+@patch("image_match.scanner.cv2.VideoCapture")
+def test_fetch_image_rstp_opne_closed(video_capture_mock: Mock) -> None:
+    obj = Mock(MockVideoCapture)
+    obj.isOpened.side_effect = [False, True]
+    obj.read.return_value = True, "THE FRAME!"
+
+    video_capture_mock.return_value = obj
+
+    res = RtspImageFetcher("rtsp://localhost/blah").fetch("test")
 
     assert res.image == "THE FRAME!"
 
@@ -32,13 +48,13 @@ def test_fetch_image_rstp(video_capture_mock: Mock) -> None:
 @patch("image_match.scanner.cv2.VideoCapture")
 def test_fetch_image_rstp_not_opened(video_capture_mock: Mock) -> None:
     obj = Mock(MockVideoCapture)
-    obj.isOpened.return_value = False
+    obj.isOpened.side_effect = [False, False]
     obj.read.return_value = True, "THE FRAME!"
 
     video_capture_mock.return_value = obj
 
     with pytest.raises(CannotConnectToStream):
-        MatchOrchestrator.fetch_image("rtsp://localhost/blah", "test")
+        RtspImageFetcher("rtsp://localhost/blah").fetch("test")
 
 
 @patch("image_match.scanner.cv2.VideoCapture")
@@ -50,4 +66,4 @@ def test_fetch_image_rstp_no_frame(video_capture_mock: Mock) -> None:
     video_capture_mock.return_value = obj
 
     with pytest.raises(FailedToReadFrame):
-        MatchOrchestrator.fetch_image("rtsp://localhost/blah", "test")
+        RtspImageFetcher("rtsp://localhost/blah").fetch("test")

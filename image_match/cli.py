@@ -1,9 +1,7 @@
 from dataclasses import asdict
 import os
 from pathlib import Path
-from datetime import datetime
 from typing import Any
-from uuid import uuid4
 
 import click
 from pydantic_yaml import parse_yaml_raw_as
@@ -18,6 +16,7 @@ from image_match.const import (
     ARG_CROP_X,
     ARG_CROP_Y,
     ARG_DUMP_DIR,
+    ARG_DUMP_MODE,
     ARG_LOG_LEVEL,
     ARG_MATCH_CONFIDENCE,
     ARG_MATCH_MODE,
@@ -31,8 +30,10 @@ from image_match.const import (
     DEFAULT_LOG_LEVEL,
     DEFAULT_MATCH_CONFIDENCE,
     DEFAULT_MATCH_MODE,
+    DEFAULT_DUMP_MODE,
     LogLevel,
     MatchMode,
+    DumpMode,
 )
 from image_match.common import maybe_set_log_level
 from image_match.rest_api import ServeConfig, new_rest_api_app
@@ -49,6 +50,7 @@ CLI_ARG_MATCH_CONFIDENCE = f"--{ARG_MATCH_CONFIDENCE}"
 CLI_ARG_MATCH_MODE = f"--{ARG_MATCH_MODE}"
 CLI_ARG_DUMP_DIR = f"--{ARG_DUMP_DIR}"
 CLI_ARG_LOG_LEVEL = f"--{ARG_LOG_LEVEL}"
+CLI_ARG_DUMP_MODE = f"--{ARG_DUMP_MODE}"
 
 log_level_option = click.option(
     CLI_ARG_LOG_LEVEL,
@@ -63,6 +65,18 @@ log_level_option = click.option(
         ]
     ),
     default=DEFAULT_LOG_LEVEL.value.str_value,
+)
+
+dump_mode_option = click.option(
+    CLI_ARG_DUMP_MODE,
+    type=click.Choice(
+        [
+            DumpMode.BOTH.value,
+            DumpMode.MATCH.value,
+            DumpMode.NO_MATCH.value,
+        ]
+    ),
+    default=DEFAULT_DUMP_MODE.value,
 )
 
 
@@ -113,7 +127,7 @@ def fetch(
     maybe_set_log_level(log_level)
 
     logging.info(f"Fetch {sample_url}")
-    result = scanner.MatchOrchestrator.fetch_image(sample_url, "sample")
+    result = scanner.ImageFetchers.get_by_url(sample_url).fetch("sample")
     sample_image = result.image
     transform_options = scanner.TransformConfig(
         x=crop_x, y=crop_y, width=crop_width, height=crop_height
@@ -156,6 +170,7 @@ def fetch(
     default=DEFAULT_MATCH_CONFIDENCE,
 )
 @log_level_option
+@dump_mode_option
 def match(
     reference_dir: Path,
     sample_url: str,
@@ -167,10 +182,11 @@ def match(
     dump_dir: Path,
     match_confidence: float,
     log_level: str,
+    dump_mode: str,
 ) -> None:
     maybe_set_log_level(log_level)
 
-    orchestrator = scanner.MatchOrchestrator(
+    orchestrator = scanner.MatchOrchestrator.from_config(
         scanner.MatchConfig(
             reference_dir=reference_dir,
             sample_url=sample_url,
@@ -180,15 +196,12 @@ def match(
             transform_config=scanner.TransformConfig(
                 x=crop_x, y=crop_y, width=crop_width, height=crop_height
             ),
+            dump_mode=DumpMode(dump_mode),
         )
     )
 
     result = orchestrator.do_match()
-    if dump_dir:
-        date_time_prefix = str(datetime.now())
-        random_suffix = str(uuid4())[-4:]
-        dump_dir_name = f"{date_time_prefix}_{random_suffix}"
-        result.dump_to_directory(dump_dir.joinpath(dump_dir_name))
+    result.maybe_dump_to_directory()
 
     print(json.dumps(asdict(result.to_serializable()), indent=2))
 

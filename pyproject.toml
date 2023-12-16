@@ -60,6 +60,9 @@ command_line = "-m pytest"
 fail_under = 98.0
 include = ["image_match/*.py"]
 show_missing = true
+exclude_lines = [
+  'raise NotImplementedError'
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
