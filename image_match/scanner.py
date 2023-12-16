@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import os
 import time
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, cast
 from typing_extensions import Self
 from functools import lru_cache
 import multiprocessing
@@ -59,7 +59,7 @@ class AbsImagePreparerResult(abc.ABC):
 
     @abc.abstractmethod
     def _dump_to_directory(self, path: Path) -> None:
-        pass
+        raise NotImplementedError()
 
 
 @dataclass(frozen=True)
@@ -68,7 +68,7 @@ class AbsImagePreparer(abc.ABC):
 
     @abc.abstractmethod
     def prepare_image(self, image: MatLike) -> AbsImagePreparerResult:
-        pass
+        raise NotImplementedError()
 
 
 @dataclass(frozen=True)
@@ -126,7 +126,7 @@ class AbsImageMatcherResult(abc.ABC):
         self._dump_to_directory(path)
 
     def _dump_to_directory(self, path: Path) -> None:
-        pass
+        raise NotImplementedError()
 
 
 @dataclass(frozen=True)
@@ -150,7 +150,7 @@ class AbsImageMatcher(abc.ABC):
     def match(
         self, prepared_sample_image: MatLike, prepared_reference_image: MatLike
     ) -> AbsImageMatcherResult:
-        pass
+        raise NotImplementedError()
 
 
 class FlannImageMatcher(AbsImageMatcher):
@@ -236,6 +236,19 @@ class BruteForceImageMatcher(AbsImageMatcher):
             is_match=match_count > 0,
             debug_image=debug_image,
         )
+
+
+class ImageMatchers:
+    @staticmethod
+    def get_by_mode(
+        match_mode: MatchMode, options: BaseImageMatcherOptions
+    ) -> AbsImageMatcher:
+        if match_mode == MatchMode.FLANN:
+            return FlannImageMatcher(options)
+        elif match_mode == MatchMode.BRUTE_FORCE:
+            return BruteForceImageMatcher(options)
+        else:
+            raise ValueError("Provided match_mode is invalid.")
 
 
 class Timer:
@@ -373,6 +386,65 @@ class DoMatchResult:
         )
 
 
+class AbsImageFetcher(abc.ABC):
+    _image_url: str
+
+    def __init__(self, image_url: str) -> None:
+        self._image_url = image_url
+
+    def fetch(self, dump_filename_prefix: str) -> FetchImageResult:
+        timer = Timer().start()
+
+        image = self._fetch_image()
+
+        return FetchImageResult(
+            filename_prefix=dump_filename_prefix,
+            image=image,
+            duration=timer.stop().duration(),
+        )
+
+    @abc.abstractmethod
+    def _fetch_image(self) -> MatLike:
+        raise NotImplementedError()
+
+
+class RtspImageFetcher(AbsImageFetcher):
+    _cap: Optional[cv2.VideoCapture] = None
+
+    def _fetch_image(self) -> MatLike:
+        if not self._cap:
+            logging.debug(f"Starting new RTSP capture for url '{self._image_url}'")
+            self._cap = cv2.VideoCapture(self._image_url)
+
+        if not self._cap.isOpened():
+            logging.debug("Capture URL is not open, attempting to reopen.")
+            self._cap.open(self._image_url)
+
+        if not self._cap.isOpened():
+            raise CannotConnectToStream()
+
+        logging.debug("Read lastest from RTSP stream.")
+        ret, frame = self._cap.read()
+        if not ret:
+            raise FailedToReadFrame()
+
+        return cast(MatLike, frame)
+
+
+class StaticImageFetch(AbsImageFetcher):
+    def _fetch_image(self) -> MatLike:
+        return cast(MatLike, cv2.imread(self._image_url))
+
+
+class ImageFetchers:
+    @staticmethod
+    def get_by_url(url: str) -> AbsImageFetcher:
+        if url.startswith("rtsp:"):
+            return RtspImageFetcher(url)
+        else:
+            return StaticImageFetch(url)
+
+
 class MatchOrchestrator:
     _config: MatchConfig
     _cached_fetch_prepared_reference_image: Callable[
@@ -381,52 +453,27 @@ class MatchOrchestrator:
     _sample_image_preparer: AbsImagePreparer
     _reference_image_preparer: AbsImagePreparer
     _image_matcher: AbsImageMatcher
+    _sample_fetcher: AbsImageFetcher
     _fetch_cached_hash: str = ""
 
-    def __init__(self, match_config: MatchConfig) -> None:
+    def __init__(
+        self,
+        match_config: MatchConfig,
+        sample_fetcher: AbsImageFetcher,
+        image_matcher: AbsImageMatcher,
+        sample_image_preparer: AbsImagePreparer,
+        reference_image_preparer: AbsImagePreparer,
+    ) -> None:
         self._config = match_config
-
-        self._sample_image_preparer = AutoThresholdImagePreparer("sample")
-        self._reference_image_preparer = AutoThresholdImagePreparer("reference")
-
-        image_matcher_options = BaseImageMatcherOptions(
-            match_confidence=self._config.match_confidence
-        )
-
-        if self._config.match_mode == MatchMode.FLANN:
-            self._image_matcher = FlannImageMatcher(image_matcher_options)
-        elif self._config.match_mode == MatchMode.BRUTE_FORCE:
-            self._image_matcher = BruteForceImageMatcher(image_matcher_options)
-        else:
-            raise ValueError("Provided match_mode is invalid.")
-
-    @staticmethod
-    def fetch_image(url: str, filename_prefix: str) -> FetchImageResult:
-        timer = Timer().start()
-
-        if url.startswith("rtsp://"):
-            cap = cv2.VideoCapture(url)
-            if not cap.isOpened():
-                raise CannotConnectToStream()
-
-            ret, frame = cap.read()
-            if not ret:
-                raise FailedToReadFrame()
-
-            image = frame
-        else:
-            image = cv2.imread(url)
-
-        return FetchImageResult(
-            filename_prefix=filename_prefix,
-            image=image,
-            duration=timer.stop().duration(),
-        )
+        self._sample_fetcher = sample_fetcher
+        self._image_matcher = image_matcher
+        self._sample_image_preparer = sample_image_preparer
+        self._reference_image_preparer = reference_image_preparer
 
     def _fetch_prepared_reference_image(
         self, path: Path
     ) -> FetchPreparedReferenceImageResult:
-        fetch_result = self.fetch_image(str(path), "reference")
+        fetch_result = StaticImageFetch(str(path)).fetch("reference")
         prepare_result = self._reference_image_preparer.prepare_image(
             fetch_result.image
         )
@@ -452,9 +499,7 @@ class MatchOrchestrator:
         total_timer = Timer().start()
 
         logging.debug(f"Fetch sample image from '{self._config.sample_url}'.")
-        sample_image_fetch_result = MatchOrchestrator.fetch_image(
-            self._config.sample_url, "sample"
-        )
+        sample_image_fetch_result = self._sample_fetcher.fetch("sample")
         sample_image = sample_image_fetch_result.image
 
         prepare_sample_timer = Timer().start()
@@ -524,6 +569,7 @@ class MatchOrchestrator:
         logging_trace("Wait for futures to complete.")
         wait(futures)
         match_all_timer.stop()
+        logging.debug(f"Match completed in {match_all_timer.duration()}s.")
 
         return DoMatchResult(
             is_match=process_result.matcher_result.is_match
@@ -573,4 +619,26 @@ class MatchOrchestrator:
             match_duration=match_timer.duration(),
             fetch_prepared_image_duration=fetch_preapred_image_timer.duration(),
             total_duration=total_timer.stop().duration(),
+        )
+
+    @staticmethod
+    def from_config(config: MatchConfig) -> "MatchOrchestrator":
+        sample_image_preparer = AutoThresholdImagePreparer("sample")
+        reference_image_preparer = AutoThresholdImagePreparer("reference")
+
+        image_matcher_options = BaseImageMatcherOptions(
+            match_confidence=config.match_confidence
+        )
+
+        image_matcher = ImageMatchers.get_by_mode(
+            config.match_mode, image_matcher_options
+        )
+        sample_fetcher = ImageFetchers.get_by_url(config.sample_url)
+
+        return MatchOrchestrator(
+            config,
+            sample_fetcher=sample_fetcher,
+            image_matcher=image_matcher,
+            sample_image_preparer=sample_image_preparer,
+            reference_image_preparer=reference_image_preparer,
         )

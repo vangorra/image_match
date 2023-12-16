@@ -113,7 +113,7 @@ def fetch(
     maybe_set_log_level(log_level)
 
     logging.info(f"Fetch {sample_url}")
-    result = scanner.MatchOrchestrator.fetch_image(sample_url, "sample")
+    result = scanner.ImageFetchers.get_by_url(sample_url).fetch("sample")
     sample_image = result.image
     transform_options = scanner.TransformConfig(
         x=crop_x, y=crop_y, width=crop_width, height=crop_height
@@ -170,7 +170,7 @@ def match(
 ) -> None:
     maybe_set_log_level(log_level)
 
-    orchestrator = scanner.MatchOrchestrator(
+    orchestrator = scanner.MatchOrchestrator.from_config(
         scanner.MatchConfig(
             reference_dir=reference_dir,
             sample_url=sample_url,

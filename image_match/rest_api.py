@@ -16,7 +16,7 @@ def new_rest_api_app(serve_config: ServeConfig) -> Flask:
     """
     app = Flask(__name__)
     orchestrators = {
-        name: scanner.MatchOrchestrator(match_config)
+        name: scanner.MatchOrchestrator.from_config(match_config)
         for (name, match_config) in serve_config.match_configs.items()
     }
 
