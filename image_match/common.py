@@ -9,9 +9,11 @@ from image_match.const import (
     DEFAULT_CROP_WIDTH,
     DEFAULT_CROP_X,
     DEFAULT_CROP_Y,
+    DEFAULT_DUMP_MODE,
     DEFAULT_MATCH_CONFIDENCE,
     DEFAULT_MATCH_MODE,
     LOGLEVEL_TRACE,
+    DumpMode,
     LogLevel,
     MatchMode,
 )
@@ -33,6 +35,7 @@ class MatchConfig:
     match_mode: MatchMode = DEFAULT_MATCH_MODE
     dump_dir: Optional[Path] = None
     match_confidence: float = DEFAULT_MATCH_CONFIDENCE
+    dump_mode: DumpMode = DEFAULT_DUMP_MODE
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,7 @@
 import abc
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
+from datetime import datetime
 import os
 import time
 from pathlib import Path
@@ -10,6 +11,7 @@ from functools import lru_cache
 import multiprocessing
 import hashlib
 import logging
+from uuid import uuid4
 
 import cv2
 from cv2.typing import MatLike
@@ -17,6 +19,7 @@ from image_match.common import MatchConfig, TransformConfig, logging_trace
 
 from image_match.const import (
     IMAGE_EXTENSIONS,
+    DumpMode,
     MatchMode,
 )
 
@@ -335,6 +338,7 @@ class DoMatchResultSerializable:
 
 @dataclass(frozen=True)
 class DoMatchResult:
+    match_config: MatchConfig
     is_match: bool
     process_result: Optional[ProcessResult]
     sample_image_fetch_result: FetchImageResult
@@ -345,20 +349,44 @@ class DoMatchResult:
     sample_prepare_duration: float
     match_attempt_count: int
 
-    def dump_to_directory(self, path: Path) -> None:
-        os.makedirs(path, exist_ok=True)
+    def maybe_dump_to_directory(self) -> Optional[Path]:
+        if not self.match_config.dump_dir:
+            return None
+
+        should_dump = (
+            (self.match_config.dump_mode == DumpMode.BOTH)
+            or (self.match_config.dump_mode == DumpMode.MATCH and self.is_match)
+            or (self.match_config.dump_mode == DumpMode.NO_MATCH and not self.is_match)
+        )
+
+        if not should_dump:
+            return None
+
+        return self.dump_to_directory(self.match_config.dump_dir)
+
+    def dump_to_directory(self, path: Path) -> Path:
+        date_time_prefix = str(datetime.now())
+        random_suffix = str(uuid4())[-4:]
+        match_str = "match" if self.is_match else "nomatch"
+        dump_dir_name = f"{date_time_prefix}_{match_str}_{random_suffix}"
+        dir_path = path.joinpath(dump_dir_name)
+
+        logging.debug(f"Dumping results to '{str(dir_path)}'.")
+        os.makedirs(dir_path, exist_ok=True)
 
         if self.process_result:
-            self.process_result.dump_to_directory(path)
+            self.process_result.dump_to_directory(dir_path)
 
-        self.prepared_cropped_sample_image_result.dump_to_directory(path)
+        self.prepared_cropped_sample_image_result.dump_to_directory(dir_path)
 
-        self.sample_image_fetch_result.dump_to_directory(path)
+        self.sample_image_fetch_result.dump_to_directory(dir_path)
 
         write_image(
             self.cropped_sample_image,
-            path.joinpath("sample_cropped.png"),
+            dir_path.joinpath("sample_cropped.png"),
         )
+
+        return dir_path
 
     def to_serializable(self) -> DoMatchResultSerializable:
         return DoMatchResultSerializable(
@@ -572,6 +600,7 @@ class MatchOrchestrator:
         logging.debug(f"Match completed in {match_all_timer.duration()}s.")
 
         return DoMatchResult(
+            match_config=self._config,
             is_match=process_result.matcher_result.is_match
             if process_result
             else False,

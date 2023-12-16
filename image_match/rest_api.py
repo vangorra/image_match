@@ -26,6 +26,10 @@ def new_rest_api_app(serve_config: ServeConfig) -> Flask:
             return "Not found", 404
 
         orchestrator = orchestrators[name]
-        return asdict(orchestrator.do_match().to_serializable())
+
+        result = orchestrator.do_match()
+        result.maybe_dump_to_directory()
+
+        return asdict(result.to_serializable())
 
     return app
