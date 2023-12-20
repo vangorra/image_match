@@ -436,27 +436,51 @@ class AbsImageFetcher(abc.ABC):
         raise NotImplementedError()
 
 
+def noop() -> None:
+    """
+    Do nothing. Used to help code coverage determine if lines were covered in
+    areas where CPython cannot detect (like continue in loops).
+    https://github.com/nedbat/coveragepy/issues/198
+    """
+
+
 class RtspImageFetcher(AbsImageFetcher):
     _cap: Optional[cv2.VideoCapture] = None
 
     def _fetch_image(self) -> MatLike:
-        if not self._cap:
-            logging.debug(f"Starting new RTSP capture for url '{self._image_url}'")
-            self._cap = cv2.VideoCapture(self._image_url)
+        max_retries = 2
+        for attempt_num in range(1, max_retries + 1):
+            is_last_attempt = attempt_num == max_retries
+            logging.debug(
+                f"Attempt {attempt_num}/{max_retries} read lastest from RTSP stream."
+            )
 
-        if not self._cap.isOpened():
-            logging.debug("Capture URL is not open, attempting to reopen.")
-            self._cap.open(self._image_url)
+            if not self._cap:
+                logging.debug(f"Starting new RTSP capture for url '{self._image_url}'")
+                self._cap = cv2.VideoCapture(self._image_url)
 
-        if not self._cap.isOpened():
-            raise CannotConnectToStream()
+            if not self._cap.isOpened():
+                self._cap = None
 
-        logging.debug("Read lastest from RTSP stream.")
-        ret, frame = self._cap.read()
-        if not ret:
-            raise FailedToReadFrame()
+                if is_last_attempt:
+                    raise CannotConnectToStream()
 
-        return cast(MatLike, frame)
+                noop()
+                continue
+
+            ret, frame = self._cap.read()
+            if not ret:
+                self._cap = None
+
+                if is_last_attempt:
+                    raise FailedToReadFrame()
+
+                noop()
+                continue
+
+            return cast(MatLike, frame)
+
+        raise ValueError("This is bug and code should have never reached here.")
 
 
 class StaticImageFetch(AbsImageFetcher):

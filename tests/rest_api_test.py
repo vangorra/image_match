@@ -1,3 +1,5 @@
+from unittest.mock import Mock, patch
+from image_match import scanner
 from image_match.rest_api import ServeConfig, new_rest_api_app
 from image_match.scanner import MatchConfig, TransformConfig
 from tests.const import (
@@ -59,3 +61,13 @@ def test_new_rest_api_app_invalid_config() -> None:
     response = client.get("/match/unknown_name")
     assert response.status == "404 NOT FOUND"
     assert not response.json
+
+
+@patch.object(scanner.MatchOrchestrator, "do_match")
+def test_rest_api_server_error(do_match_mock: Mock) -> None:
+    do_match_mock.side_effect = Exception("ERROR")
+
+    app = new_rest_api_app(SERVE_CONFIG)
+    client = app.test_client()
+    response = client.get(f"/match/{CLOSED_NAME}")
+    assert response.status == "503 SERVICE UNAVAILABLE"
