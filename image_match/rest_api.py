@@ -27,9 +27,11 @@ def new_rest_api_app(serve_config: ServeConfig) -> Flask:
 
         orchestrator = orchestrators[name]
 
-        result = orchestrator.do_match()
-        result.maybe_dump_to_directory()
-
-        return asdict(result.to_serializable())
+        try:
+            result = orchestrator.do_match()
+            result.maybe_dump_to_directory()
+            return asdict(result.to_serializable())
+        except:  # noqa: E722
+            return "Expected error.", 503
 
     return app
